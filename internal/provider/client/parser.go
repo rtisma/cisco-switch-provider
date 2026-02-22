@@ -35,6 +35,7 @@ type SVIInfo struct {
 	SubnetMask  string
 	Description string
 	AdminState  string
+	DHCPServers []string
 	Exists      bool
 }
 
@@ -218,6 +219,7 @@ func ParseSVIConfig(output string, vlanID int) (*SVIInfo, error) {
 
 	// Parse IP address using regex
 	ipRegex := regexp.MustCompile(`ip address (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)`)
+	helperRegex := regexp.MustCompile(`ip helper-address (\d+\.\d+\.\d+\.\d+)`)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -227,6 +229,8 @@ func ParseSVIConfig(output string, vlanID int) (*SVIInfo, error) {
 		} else if matches := ipRegex.FindStringSubmatch(line); len(matches) == 3 {
 			svi.IPAddress = matches[1]
 			svi.SubnetMask = matches[2]
+		} else if matches := helperRegex.FindStringSubmatch(line); len(matches) == 2 {
+			svi.DHCPServers = append(svi.DHCPServers, matches[1])
 		} else if line == "shutdown" {
 			svi.AdminState = "down"
 		} else if line == "no shutdown" {

@@ -27,11 +27,12 @@ type SVIResource struct {
 }
 
 type SVIResourceModel struct {
-	VlanID     types.Int64  `tfsdk:"vlan_id"`
-	IPAddress  types.String `tfsdk:"ip_address"`
-	SubnetMask types.String `tfsdk:"subnet_mask"`
+	VlanID      types.Int64  `tfsdk:"vlan_id"`
+	IPAddress   types.String `tfsdk:"ip_address"`
+	SubnetMask  types.String `tfsdk:"subnet_mask"`
 	Description types.String `tfsdk:"description"`
-	Enabled    types.Bool   `tfsdk:"enabled"`
+	Enabled     types.Bool   `tfsdk:"enabled"`
+	DHCPServers types.List   `tfsdk:"dhcp_servers"`
 }
 
 func (r *SVIResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -67,6 +68,11 @@ func (r *SVIResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				Computed:    true,
 				Default:     booldefault.StaticBool(true),
 			},
+		"dhcp_servers": schema.ListAttribute{
+			Description: "List of DHCP server IP addresses for DHCP relay (ip helper-address)",
+			ElementType: types.StringType,
+			Optional:    true,
+		},
 		},
 	}
 }
@@ -110,6 +116,15 @@ func (r *SVIResource) Create(ctx context.Context, req resource.CreateRequest, re
 	commands = append(commands, fmt.Sprintf("ip address %s %s",
 		data.IPAddress.ValueString(),
 		data.SubnetMask.ValueString()))
+
+	// Add DHCP relay servers if configured
+	if !data.DHCPServers.IsNull() && len(data.DHCPServers.Elements()) > 0 {
+		var dhcpServers []types.String
+		data.DHCPServers.ElementsAs(ctx, &dhcpServers, false)
+		for _, server := range dhcpServers {
+			commands = append(commands, fmt.Sprintf("ip helper-address %s", server.ValueString()))
+		}
+	}
 
 	if data.Enabled.ValueBool() {
 		commands = append(commands, "no shutdown")
@@ -206,6 +221,15 @@ func (r *SVIResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	commands = append(commands, fmt.Sprintf("ip address %s %s",
 		data.IPAddress.ValueString(),
 		data.SubnetMask.ValueString()))
+
+	// Add DHCP relay servers if configured
+	if !data.DHCPServers.IsNull() && len(data.DHCPServers.Elements()) > 0 {
+		var dhcpServers []types.String
+		data.DHCPServers.ElementsAs(ctx, &dhcpServers, false)
+		for _, server := range dhcpServers {
+			commands = append(commands, fmt.Sprintf("ip helper-address %s", server.ValueString()))
+		}
+	}
 
 	if data.Enabled.ValueBool() {
 		commands = append(commands, "no shutdown")
@@ -309,6 +333,14 @@ func (r *SVIResource) ImportState(ctx context.Context, req resource.ImportStateR
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("description"), sviInfo.Description)...)
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("enabled"), sviInfo.AdminState == "up")...)
+	if len(sviInfo.DHCPServers) > 0 {
+		dhcpElements := make([]types.String, len(sviInfo.DHCPServers))
+		for i, server := range sviInfo.DHCPServers {
+			dhcpElements[i] = types.StringValue(server)
+		}
+		dhcpList, _ := types.ListValueFrom(ctx, types.StringType, dhcpElements)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("dhcp_servers"), dhcpList)...)
+	}
 }
 
 // Helper methods
@@ -329,4 +361,14 @@ func (r *SVIResource) updateModelFromInfo(data *SVIResourceModel, info *client.S
 		data.Description = types.StringValue(info.Description)
 	}
 	data.Enabled = types.BoolValue(info.AdminState == "up")
+
+	// Convert DHCP servers to types.List
+	if len(info.DHCPServers) > 0 {
+		dhcpElements := make([]types.String, len(info.DHCPServers))
+		for i, server := range info.DHCPServers {
+			dhcpElements[i] = types.StringValue(server)
+		}
+		dhcpList, _ := types.ListValueFrom(context.Background(), types.StringType, dhcpElements)
+		data.DHCPServers = dhcpList
+	}
 }

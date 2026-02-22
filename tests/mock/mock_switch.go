@@ -52,6 +52,7 @@ type SVI struct {
 	SubnetMask  string
 	Description string
 	AdminState  string
+	DHCPServers []string
 }
 
 // NewMockSwitch creates a new mock switch
@@ -352,6 +353,9 @@ func (ms *MockSwitch) handleShowCommand(channel ssh.Channel, cmd string) {
 						output += fmt.Sprintf(" description %s\r\n", svi.Description)
 					}
 					output += fmt.Sprintf(" ip address %s %s\r\n", svi.IPAddress, svi.SubnetMask)
+					for _, dhcpServer := range svi.DHCPServers {
+						output += fmt.Sprintf(" ip helper-address %s\r\n", dhcpServer)
+					}
 					if svi.AdminState == "down" {
 						output += fmt.Sprintf(" shutdown\r\n")
 					} else {
@@ -561,6 +565,13 @@ func (ms *MockSwitch) handleSVIConfigCommand(svi *SVI, cmd string) {
 		if len(matches) == 3 {
 			svi.IPAddress = matches[1]
 			svi.SubnetMask = matches[2]
+		}
+	} else if strings.HasPrefix(cmd, "ip helper-address ") {
+		// Parse "ip helper-address 10.0.0.1"
+		re := regexp.MustCompile(`ip helper-address (\S+)`)
+		matches := re.FindStringSubmatch(cmd)
+		if len(matches) == 2 {
+			svi.DHCPServers = append(svi.DHCPServers, matches[1])
 		}
 	} else if cmd == "shutdown" {
 		svi.AdminState = "down"
