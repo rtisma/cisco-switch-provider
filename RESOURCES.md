@@ -9,8 +9,11 @@ Complete API reference for all resources and data sources in the Cisco Switch Pr
 3. [cisco_interface](#cisco_interface) - Switchport Configuration
 4. [cisco_svi](#cisco_svi) - Switch Virtual Interface (Inter-VLAN Routing)
 5. [cisco_interface_ip](#cisco_interface_ip) - IP Address Assignment
-6. [Examples](#examples)
-7. [Import](#import)
+6. [cisco_dhcp_pool](#cisco_dhcp_pool) - DHCP Server Pool
+7. [cisco_acl](#cisco_acl) - Named IP Access List
+8. [cisco_acl_rule](#cisco_acl_rule) - ACL Rule (ordered ACE)
+9. [Examples](#examples)
+10. [Import](#import)
 
 ---
 
@@ -39,10 +42,10 @@ provider "cisco" {
 | `host` | string | **Yes** | - | IP address or hostname of the Cisco switch |
 | `port` | number | No | `22` | SSH port number |
 | `username` | string | **Yes** | - | SSH username for authentication |
-| `password` | string | **Yes** | - | SSH password (marked as sensitive) |
+| `password` | string | **Yes** | - | SSH password for authentication (marked as sensitive). This is the only supported auth method; SSH key-based auth is not currently supported. |
 | `enable_password` | string | No | - | Enable mode password if different from SSH password |
-| `ssh_timeout` | number | No | `30` | SSH connection timeout in seconds (1-600) |
-| `command_timeout` | number | No | `10` | Command execution timeout in seconds (1-600) |
+| `ssh_timeout` | number | No | `30` | SSH connection timeout in seconds |
+| `command_timeout` | number | No | `10` | Command execution timeout in seconds |
 
 ### Example
 
@@ -416,11 +419,12 @@ Manages a Switch Virtual Interface (SVI) for inter-VLAN routing. SVIs provide La
 
 ```hcl
 resource "cisco_svi" "example" {
-  vlan_id     = number # Required, forces new resource
-  ip_address  = string # Required
-  subnet_mask = string # Required
-  description = string # Optional
-  enabled     = bool   # Optional, default: true
+  vlan_id      = number       # Required, forces new resource
+  ip_address   = string       # Required
+  subnet_mask  = string       # Required
+  description  = string       # Optional
+  enabled      = bool         # Optional, default: true
+  dhcp_servers = list(string) # Optional - DHCP relay servers
 }
 ```
 
@@ -433,6 +437,9 @@ resource "cisco_svi" "example" {
 | `subnet_mask` | string | **Yes** | No | - | Subnet mask (e.g., "255.255.255.0") |
 | `description` | string | No | No | - | Interface description |
 | `enabled` | bool | No | No | `true` | Administrative state (`true` = no shutdown) |
+| `dhcp_servers` | list(string) | No | No | - | DHCP relay server IP addresses (configures `ip helper-address`) |
+| `access_group_in` | string | No | No | - | ACL name to apply inbound (`ip access-group <name> in`) |
+| `access_group_out` | string | No | No | - | ACL name to apply outbound (`ip access-group <name> out`) |
 
 ### Attribute Reference
 
@@ -455,6 +462,7 @@ configure terminal
 interface vlan <vlan_id>
 description <description>
 ip address <ip_address> <subnet_mask>
+ip helper-address <dhcp_server>   (repeated for each dhcp_servers entry)
 no shutdown
 end
 ```
@@ -483,6 +491,19 @@ resource "cisco_svi" "sales_gateway" {
   subnet_mask = "255.255.255.0"
   description = "Sales VLAN Gateway"
   enabled     = true
+}
+```
+
+#### SVI with DHCP Relay
+
+```hcl
+resource "cisco_svi" "sales_gateway" {
+  vlan_id      = cisco_vlan.sales.vlan_id
+  ip_address   = "192.168.100.1"
+  subnet_mask  = "255.255.255.0"
+  description  = "Sales VLAN Gateway"
+  enabled      = true
+  dhcp_servers = ["10.0.0.10", "10.0.0.11"]  # ip helper-address entries
 }
 ```
 
@@ -702,6 +723,367 @@ terraform import cisco_interface_ip.management "Vlan1"
 
 ---
 
+## cisco_dhcp_pool
+
+Configures the switch to act as a DHCP server for a subnet using `ip dhcp pool`. Each pool manages IP allocation for one network.
+
+> **DHCP server vs. DHCP relay**: Use `cisco_dhcp_pool` when the switch itself serves DHCP. To forward DHCP requests to an external server, use `dhcp_servers` on `cisco_svi` instead.
+
+### Schema
+
+```hcl
+resource "cisco_dhcp_pool" "example" {
+  name           = string       # Required, forces new resource
+  network        = string       # Required
+  subnet_mask    = string       # Required
+  default_router = string       # Optional
+  dns_servers    = list(string) # Optional
+  lease_days     = number       # Optional, default: 1
+  lease_hours    = number       # Optional, default: 0
+  lease_minutes  = number       # Optional, default: 0
+  domain_name    = string       # Optional
+}
+```
+
+### Attributes
+
+| Attribute | Type | Required | Forces New | Default | Description |
+|-----------|------|----------|------------|---------|-------------|
+| `name` | string | **Yes** | **Yes** | - | Pool name (used in `ip dhcp pool <name>`) |
+| `network` | string | **Yes** | No | - | Network address for the pool (e.g., `"192.168.100.0"`) |
+| `subnet_mask` | string | **Yes** | No | - | Subnet mask (e.g., `"255.255.255.0"`) |
+| `default_router` | string | No | No | - | Default gateway IP offered to clients |
+| `dns_servers` | list(string) | No | No | - | DNS server IPs offered to clients (up to 8) |
+| `lease_days` | number | No | No | `1` | Lease duration in days |
+| `lease_hours` | number | No | No | `0` | Additional lease hours |
+| `lease_minutes` | number | No | No | `0` | Additional lease minutes |
+| `domain_name` | string | No | No | - | Domain name offered to clients |
+
+### Cisco Commands
+
+**Create/Update:**
+```
+configure terminal
+ip dhcp pool <name>
+ network <network> <subnet_mask>
+ default-router <default_router>
+ dns-server <dns_servers...>
+ lease <lease_days> <lease_hours> <lease_minutes>
+ domain-name <domain_name>
+end
+```
+
+**Read:**
+```
+show running-config | section ip dhcp pool <name>
+```
+
+**Delete:**
+```
+configure terminal
+no ip dhcp pool <name>
+end
+```
+
+### Examples
+
+#### Basic Pool
+
+```hcl
+resource "cisco_dhcp_pool" "sales" {
+  name        = "SALES"
+  network     = "192.168.100.0"
+  subnet_mask = "255.255.255.0"
+}
+```
+
+#### Full Configuration
+
+```hcl
+resource "cisco_dhcp_pool" "sales" {
+  name           = "SALES"
+  network        = "192.168.100.0"
+  subnet_mask    = "255.255.255.0"
+  default_router = "192.168.100.1"
+  dns_servers    = ["8.8.8.8", "8.8.4.4"]
+  lease_days     = 1
+  lease_hours    = 12
+  domain_name    = "sales.example.com"
+}
+```
+
+#### Multiple Pools (one per VLAN)
+
+```hcl
+resource "cisco_vlan" "sales" {
+  vlan_id = 100
+  name    = "Sales"
+}
+
+resource "cisco_svi" "sales_gw" {
+  vlan_id     = cisco_vlan.sales.vlan_id
+  ip_address  = "192.168.100.1"
+  subnet_mask = "255.255.255.0"
+}
+
+resource "cisco_dhcp_pool" "sales" {
+  name           = "SALES"
+  network        = "192.168.100.0"
+  subnet_mask    = "255.255.255.0"
+  default_router = cisco_svi.sales_gw.ip_address
+  dns_servers    = ["8.8.8.8"]
+  lease_days     = 1
+
+  depends_on = [cisco_svi.sales_gw]
+}
+```
+
+### Import
+
+DHCP pools can be imported using the pool name:
+
+```bash
+terraform import cisco_dhcp_pool.sales "SALES"
+```
+
+### Notes
+
+- Pool names are case-sensitive on Cisco IOS
+- Ensure `ip routing` is enabled if using SVIs for inter-VLAN routing alongside DHCP
+- Use `ip dhcp excluded-address` (configured manually or via a future resource) to reserve addresses for static assignments such as the gateway itself
+- Deleting the pool stops DHCP service for that subnet immediately
+
+---
+
+## cisco_acl
+
+Creates a named IP access list on the switch. The ACL itself is just a named container — add rules with `cisco_acl_rule` and apply it to an SVI with `access_group_in` or `access_group_out`.
+
+### Schema
+
+```hcl
+resource "cisco_acl" "example" {
+  name = string  # Required, forces new resource
+  type = string  # Required, forces new resource: "standard" or "extended"
+}
+```
+
+### Attributes
+
+| Attribute | Type | Required | Forces New | Description |
+|-----------|------|----------|------------|-------------|
+| `name` | string | **Yes** | **Yes** | ACL name |
+| `type` | string | **Yes** | **Yes** | `"standard"` (source-only) or `"extended"` (src, dst, and ports) |
+
+### Cisco Commands
+
+**Create:**
+```
+configure terminal
+ip access-list <type> <name>
+end
+```
+
+**Delete:**
+```
+configure terminal
+no ip access-list <type> <name>
+end
+```
+
+### Import
+
+Import ID format: `<type>/<name>`
+
+```bash
+terraform import cisco_acl.example "extended/INTER-VLAN-POLICY"
+```
+
+---
+
+## cisco_acl_rule
+
+Adds a single ACE (access control entry) to a named ACL. The `sequence` number is the ordering mechanism — lower sequence numbers are evaluated first. Changing `acl_name` or `sequence` forces a new resource.
+
+### Schema
+
+```hcl
+resource "cisco_acl_rule" "example" {
+  acl_name             = string  # Required, forces new resource
+  sequence             = number  # Required, forces new resource
+  action               = string  # Required: "permit" or "deny"
+  protocol             = string  # Optional, default: "ip"
+  source               = string  # Required
+  source_wildcard      = string  # Optional
+  destination          = string  # Optional (required for extended ACLs)
+  destination_wildcard = string  # Optional
+  src_port             = string  # Optional (TCP/UDP only)
+  dst_port             = string  # Optional (TCP/UDP only)
+  log                  = bool    # Optional, default: false
+}
+```
+
+### Attributes
+
+| Attribute | Type | Required | Forces New | Default | Description |
+|-----------|------|----------|------------|---------|-------------|
+| `acl_name` | string | **Yes** | **Yes** | - | ACL this rule belongs to |
+| `sequence` | number | **Yes** | **Yes** | - | Rule evaluation order (lower = first) |
+| `action` | string | **Yes** | No | - | `"permit"` or `"deny"` |
+| `protocol` | string | No | No | `"ip"` | `"ip"`, `"tcp"`, `"udp"`, `"icmp"` |
+| `source` | string | **Yes** | No | - | `"any"`, host IP, or network IP (use with `source_wildcard`) |
+| `source_wildcard` | string | No | No | - | Wildcard mask for network source (e.g. `"0.0.0.255"`) |
+| `destination` | string | No | No | - | `"any"`, host IP, or network IP |
+| `destination_wildcard` | string | No | No | - | Wildcard mask for network destination |
+| `src_port` | string | No | No | - | Source port expression, TCP/UDP only (e.g. `"eq 1024"`, `"range 8000 8080"`) |
+| `dst_port` | string | No | No | - | Destination port expression, TCP/UDP only (e.g. `"eq 443"`, `"eq www"`) |
+| `log` | bool | No | No | `false` | Log packets that match this rule |
+
+### Address Format
+
+| You want to match | `source` / `destination` | `source_wildcard` / `destination_wildcard` |
+|---|---|---|
+| All traffic | `"any"` | (omit) |
+| Single host | `"10.0.0.5"` | (omit) |
+| /24 subnet | `"192.168.100.0"` | `"0.0.0.255"` |
+| /16 subnet | `"10.10.0.0"` | `"0.0.255.255"` |
+
+### Port Expression Format (TCP/UDP)
+
+| You want to match | `dst_port` / `src_port` |
+|---|---|
+| Exactly port 443 | `"eq 443"` |
+| Well-known name | `"eq www"` or `"eq https"` |
+| Ports 8000–8080 | `"range 8000 8080"` |
+| Ports below 1024 | `"lt 1024"` |
+| Not port 23 | `"neq 23"` |
+
+### Cisco Commands
+
+**Create/Update:**
+```
+configure terminal
+ip access-list <extended|standard> <acl_name>
+ <sequence> <action> <protocol> <src-spec> [src-port] <dst-spec> [dst-port] [log]
+end
+```
+
+**Delete rule:**
+```
+configure terminal
+ip access-list <extended|standard> <acl_name>
+ no <sequence>
+end
+```
+
+### Examples
+
+#### Block one VLAN from reaching another
+
+```hcl
+resource "cisco_acl" "vlan_isolation" {
+  name = "VLAN-ISOLATION"
+  type = "extended"
+}
+
+# Block VLAN 100 (Sales) from VLAN 300 (Finance)
+resource "cisco_acl_rule" "block_sales_to_finance" {
+  acl_name             = cisco_acl.vlan_isolation.name
+  sequence             = 10
+  action               = "deny"
+  protocol             = "ip"
+  source               = "192.168.100.0"
+  source_wildcard      = "0.0.0.255"
+  destination          = "192.168.300.0"
+  destination_wildcard = "0.0.0.255"
+  log                  = true
+}
+
+# Allow all other traffic
+resource "cisco_acl_rule" "permit_rest" {
+  acl_name    = cisco_acl.vlan_isolation.name
+  sequence    = 999
+  action      = "permit"
+  protocol    = "ip"
+  source      = "any"
+  destination = "any"
+}
+
+# Apply inbound on the Sales SVI
+resource "cisco_svi" "sales_gw" {
+  vlan_id         = cisco_vlan.sales.vlan_id
+  ip_address      = "192.168.100.1"
+  subnet_mask     = "255.255.255.0"
+  access_group_in = cisco_acl.vlan_isolation.name
+
+  depends_on = [cisco_acl_rule.block_sales_to_finance, cisco_acl_rule.permit_rest]
+}
+```
+
+#### Allow only specific ports between VLANs
+
+```hcl
+resource "cisco_acl" "web_only" {
+  name = "WEB-ONLY"
+  type = "extended"
+}
+
+# Allow HTTP from Users VLAN to Server VLAN
+resource "cisco_acl_rule" "allow_http" {
+  acl_name             = cisco_acl.web_only.name
+  sequence             = 10
+  action               = "permit"
+  protocol             = "tcp"
+  source               = "192.168.50.0"
+  source_wildcard      = "0.0.0.255"
+  destination          = "192.168.10.0"
+  destination_wildcard = "0.0.0.255"
+  dst_port             = "eq 80"
+}
+
+# Allow HTTPS
+resource "cisco_acl_rule" "allow_https" {
+  acl_name             = cisco_acl.web_only.name
+  sequence             = 20
+  action               = "permit"
+  protocol             = "tcp"
+  source               = "192.168.50.0"
+  source_wildcard      = "0.0.0.255"
+  destination          = "192.168.10.0"
+  destination_wildcard = "0.0.0.255"
+  dst_port             = "eq 443"
+}
+
+# Deny everything else
+resource "cisco_acl_rule" "deny_all" {
+  acl_name    = cisco_acl.web_only.name
+  sequence    = 999
+  action      = "deny"
+  protocol    = "ip"
+  source      = "any"
+  destination = "any"
+  log         = true
+}
+```
+
+### Import
+
+Import ID format: `<acl_name>/<sequence>`
+
+```bash
+terraform import cisco_acl_rule.example "INTER-VLAN-POLICY/10"
+```
+
+### Notes
+
+- Rules are evaluated in ascending sequence order; the first match wins
+- Cisco IOS has an implicit `deny any any` at the end of every ACL — add an explicit deny rule with `log = true` to make dropped traffic visible
+- Sequence numbers can have gaps (10, 20, 30) to allow future insertion without recreating resources
+- An applied ACL with no rules drops all traffic (only the implicit deny remains)
+- For inter-VLAN filtering, apply the ACL `in` on the source VLAN SVI
+
+---
+
 ## Examples
 
 ### Complete Network Setup
@@ -832,6 +1214,15 @@ terraform import cisco_svi.example 100
 
 # Interface IPs - use interface name
 terraform import cisco_interface_ip.example "Vlan1"
+
+# DHCP pools - use pool name
+terraform import cisco_dhcp_pool.example "SALES"
+
+# ACLs - use "<type>/<name>"
+terraform import cisco_acl.example "extended/INTER-VLAN-POLICY"
+
+# ACL rules - use "<acl_name>/<sequence>"
+terraform import cisco_acl_rule.example "INTER-VLAN-POLICY/10"
 ```
 
 ### Import Example Workflow

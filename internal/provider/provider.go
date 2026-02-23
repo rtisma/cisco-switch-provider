@@ -183,6 +183,11 @@ func (p *CiscoProvider) Resources(ctx context.Context) []func() resource.Resourc
 		resources.NewInterfaceResource,
 		resources.NewSVIResource,
 		resources.NewInterfaceIPResource,
+		resources.NewDHCPPoolResource,
+		resources.NewACLPolicyResource,
+		resources.NewACLRuleResource,
+		resources.NewSNMPCommunityResource,
+		resources.NewSNMPResource,
 	}
 }
 

@@ -13,7 +13,10 @@ var (
 	configPromptRegex     = regexp.MustCompile(`\w+\(config\)#\s*$`)
 	configIfPromptRegex   = regexp.MustCompile(`\w+\(config-if\)#\s*$`)
 	configVlanPromptRegex = regexp.MustCompile(`\w+\(config-vlan\)#\s*$`)
-	hostnameRegex         = regexp.MustCompile(`^(\w+)[>#]`)
+	configDhcpPromptRegex    = regexp.MustCompile(`\w+\(dhcp-config\)#\s*$`)
+	configExtNaclPromptRegex = regexp.MustCompile(`\w+\(config-ext-nacl\)#\s*$`)
+	configStdNaclPromptRegex = regexp.MustCompile(`\w+\(config-std-nacl\)#\s*$`)
+	hostnameRegex            = regexp.MustCompile(`^(\w+)[>#]`)
 )
 
 // hasPrompt checks if the output ends with a CLI prompt
@@ -30,7 +33,10 @@ func (c *Client) hasPrompt(output string) bool {
 		privilegedPromptRegex.MatchString(lastLine) ||
 		configPromptRegex.MatchString(lastLine) ||
 		configIfPromptRegex.MatchString(lastLine) ||
-		configVlanPromptRegex.MatchString(lastLine)
+		configVlanPromptRegex.MatchString(lastLine) ||
+		configDhcpPromptRegex.MatchString(lastLine) ||
+		configExtNaclPromptRegex.MatchString(lastLine) ||
+		configStdNaclPromptRegex.MatchString(lastLine)
 }
 
 // detectModeFromPrompt detects the CLI mode and hostname from prompt output
@@ -52,6 +58,12 @@ func (c *Client) detectModeFromPrompt(output string) (CLIMode, string) {
 	// Detect mode
 	mode := ModeUnknown
 	switch {
+	case configExtNaclPromptRegex.MatchString(lastLine):
+		mode = ModeConfigNacl
+	case configStdNaclPromptRegex.MatchString(lastLine):
+		mode = ModeConfigNacl
+	case configDhcpPromptRegex.MatchString(lastLine):
+		mode = ModeConfigDhcp
 	case configVlanPromptRegex.MatchString(lastLine):
 		mode = ModeConfigVlan
 	case configIfPromptRegex.MatchString(lastLine):

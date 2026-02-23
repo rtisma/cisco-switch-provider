@@ -46,8 +46,8 @@ terraform {
 provider "cisco" {
   host            = "192.168.1.1"  # Change to your switch IP
   username        = "admin"
-  password        = "your-password"
-  enable_password = "your-enable-password"
+  password        = "your-password"        # SSH password (required; key-based auth not supported)
+  enable_password = "your-enable-password" # Optional: only needed if enable requires a separate password
 }
 
 # Create a simple VLAN

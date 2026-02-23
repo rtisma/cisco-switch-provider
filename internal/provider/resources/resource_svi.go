@@ -27,12 +27,14 @@ type SVIResource struct {
 }
 
 type SVIResourceModel struct {
-	VlanID      types.Int64  `tfsdk:"vlan_id"`
-	IPAddress   types.String `tfsdk:"ip_address"`
-	SubnetMask  types.String `tfsdk:"subnet_mask"`
-	Description types.String `tfsdk:"description"`
-	Enabled     types.Bool   `tfsdk:"enabled"`
-	DHCPServers types.List   `tfsdk:"dhcp_servers"`
+	VlanID          types.Int64  `tfsdk:"vlan_id"`
+	IPAddress       types.String `tfsdk:"ip_address"`
+	SubnetMask      types.String `tfsdk:"subnet_mask"`
+	Description     types.String `tfsdk:"description"`
+	Enabled         types.Bool   `tfsdk:"enabled"`
+	DHCPServers     types.List   `tfsdk:"dhcp_servers"`
+	AccessGroupIn   types.String `tfsdk:"access_group_in"`
+	AccessGroupOut  types.String `tfsdk:"access_group_out"`
 }
 
 func (r *SVIResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -71,6 +73,14 @@ func (r *SVIResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 		"dhcp_servers": schema.ListAttribute{
 			Description: "List of DHCP server IP addresses for DHCP relay (ip helper-address)",
 			ElementType: types.StringType,
+			Optional:    true,
+		},
+		"access_group_in": schema.StringAttribute{
+			Description: "Name of a cisco_acl_policy to apply inbound on this SVI (ip access-group <name> in). Controls traffic arriving on this VLAN.",
+			Optional:    true,
+		},
+		"access_group_out": schema.StringAttribute{
+			Description: "Name of a cisco_acl_policy to apply outbound on this SVI (ip access-group <name> out). Controls traffic leaving this VLAN.",
 			Optional:    true,
 		},
 		},
@@ -124,6 +134,13 @@ func (r *SVIResource) Create(ctx context.Context, req resource.CreateRequest, re
 		for _, server := range dhcpServers {
 			commands = append(commands, fmt.Sprintf("ip helper-address %s", server.ValueString()))
 		}
+	}
+
+	if !data.AccessGroupIn.IsNull() && data.AccessGroupIn.ValueString() != "" {
+		commands = append(commands, fmt.Sprintf("ip access-group %s in", data.AccessGroupIn.ValueString()))
+	}
+	if !data.AccessGroupOut.IsNull() && data.AccessGroupOut.ValueString() != "" {
+		commands = append(commands, fmt.Sprintf("ip access-group %s out", data.AccessGroupOut.ValueString()))
 	}
 
 	if data.Enabled.ValueBool() {
@@ -200,13 +217,16 @@ func (r *SVIResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 }
 
 func (r *SVIResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var data SVIResourceModel
+	var plan SVIResourceModel
+	var state SVIResourceModel
 
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	data := plan
 	vlanID := int(data.VlanID.ValueInt64())
 
 	// Build configuration commands
@@ -229,6 +249,25 @@ func (r *SVIResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		for _, server := range dhcpServers {
 			commands = append(commands, fmt.Sprintf("ip helper-address %s", server.ValueString()))
 		}
+	}
+
+	// Handle access-group changes: remove old if replaced or cleared, apply new if set.
+	oldIn := state.AccessGroupIn.ValueString()
+	newIn := data.AccessGroupIn.ValueString()
+	if oldIn != "" && oldIn != newIn {
+		commands = append(commands, fmt.Sprintf("no ip access-group %s in", oldIn))
+	}
+	if newIn != "" {
+		commands = append(commands, fmt.Sprintf("ip access-group %s in", newIn))
+	}
+
+	oldOut := state.AccessGroupOut.ValueString()
+	newOut := data.AccessGroupOut.ValueString()
+	if oldOut != "" && oldOut != newOut {
+		commands = append(commands, fmt.Sprintf("no ip access-group %s out", oldOut))
+	}
+	if newOut != "" {
+		commands = append(commands, fmt.Sprintf("ip access-group %s out", newOut))
 	}
 
 	if data.Enabled.ValueBool() {
@@ -361,6 +400,12 @@ func (r *SVIResource) updateModelFromInfo(data *SVIResourceModel, info *client.S
 		data.Description = types.StringValue(info.Description)
 	}
 	data.Enabled = types.BoolValue(info.AdminState == "up")
+	if info.AccessGroupIn != "" {
+		data.AccessGroupIn = types.StringValue(info.AccessGroupIn)
+	}
+	if info.AccessGroupOut != "" {
+		data.AccessGroupOut = types.StringValue(info.AccessGroupOut)
+	}
 
 	// Convert DHCP servers to types.List
 	if len(info.DHCPServers) > 0 {

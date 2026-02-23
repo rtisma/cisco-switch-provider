@@ -18,6 +18,8 @@ const (
 	ModeConfig        // Router(config)#
 	ModeConfigIf      // Router(config-if)#
 	ModeConfigVlan    // Router(config-vlan)#
+	ModeConfigDhcp    // Router(dhcp-config)#
+	ModeConfigNacl    // Router(config-ext-nacl)# or Router(config-std-nacl)#
 )
 
 // String returns the string representation of the CLI mode
@@ -33,6 +35,10 @@ func (m CLIMode) String() string {
 		return "config-if"
 	case ModeConfigVlan:
 		return "config-vlan"
+	case ModeConfigDhcp:
+		return "dhcp-config"
+	case ModeConfigNacl:
+		return "config-nacl"
 	default:
 		return "unknown"
 	}
@@ -203,7 +209,9 @@ func (c *Client) ExecuteCommand(command string) (string, error) {
 	return output, nil
 }
 
-// ExecuteConfigCommands executes a series of commands in config mode
+// ExecuteConfigCommands executes a series of commands in config mode and then
+// saves the running configuration to startup-config via "write memory" so that
+// changes survive a reboot.
 func (c *Client) ExecuteConfigCommands(commands []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -245,5 +253,19 @@ func (c *Client) ExecuteConfigCommands(commands []string) error {
 		return err
 	}
 
+	// Persist changes to startup-config so they survive a reboot.
+	return c.writeMemory()
+}
+
+// writeMemory saves running-config to startup-config ("write memory").
+// Must be called with c.mu held and while in privileged mode.
+func (c *Client) writeMemory() error {
+	output, err := c.sendCommand("write memory")
+	if err != nil {
+		return fmt.Errorf("write memory failed: %w", err)
+	}
+	if isError, errMsg := IsErrorOutput(output); isError {
+		return fmt.Errorf("write memory error: %s", errMsg)
+	}
 	return nil
 }
