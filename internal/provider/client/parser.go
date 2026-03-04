@@ -737,6 +737,117 @@ func startsWithDigit(s string) bool {
 	return s[0] >= '0' && s[0] <= '9'
 }
 
+// ── Interfaces status ─────────────────────────────────────────────────────────
+
+// InterfaceStatusInfo represents a row from "show interfaces status"
+type InterfaceStatusInfo struct {
+	Name        string // Full name, e.g., "GigabitEthernet1/0/1"
+	ShortName   string // Abbreviated name, e.g., "Gi1/0/1"
+	Description string // Port description/name column
+	Status      string // connected, notconnect, disabled, err-disabled, etc.
+	Vlan        string // VLAN ID, "trunk", or "routed"
+	Duplex      string // a-full, a-half, full, half, auto
+	Speed       string // a-100, a-1000, 100, 1000, auto, etc.
+	MediaType   string // 10/100/1000BaseTX, SFP, etc.
+}
+
+// ParseShowInterfacesStatus parses "show interfaces status" output.
+// Column positions are derived dynamically from the header line.
+func ParseShowInterfacesStatus(output string) ([]InterfaceStatusInfo, error) {
+	lines := splitLines(output)
+
+	// Find the header line (starts with "Port" and contains "Status" and "Vlan")
+	headerIdx := -1
+	var headerLine string
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Port") && containsString(line, "Status") && containsString(line, "Vlan") {
+			headerLine = line
+			headerIdx = i
+			break
+		}
+	}
+
+	if headerIdx < 0 {
+		return nil, nil
+	}
+
+	// Detect column start positions from the header line.
+	// We find each keyword's position within the raw (untrimmed) header line.
+	colPort := strings.Index(headerLine, "Port")
+	colName := strings.Index(headerLine, "Name")
+	colStatus := strings.Index(headerLine, "Status")
+	colVlan := strings.Index(headerLine, "Vlan")
+	colDuplex := strings.Index(headerLine, "Duplex")
+	colSpeed := strings.Index(headerLine, "Speed")
+	colType := strings.Index(headerLine, "Type")
+
+	extract := func(line string, start, end int) string {
+		if start < 0 || start >= len(line) {
+			return ""
+		}
+		if end < 0 || end > len(line) {
+			end = len(line)
+		}
+		return strings.TrimSpace(line[start:end])
+	}
+
+	var interfaces []InterfaceStatusInfo
+	for _, line := range lines[headerIdx+1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		// Skip separator or summary lines (e.g. "-- More --")
+		if colStatus > 0 && len(line) < colStatus {
+			continue
+		}
+
+		shortName := extract(line, colPort, colName)
+		if shortName == "" {
+			continue
+		}
+
+		iface := InterfaceStatusInfo{
+			ShortName:   shortName,
+			Name:        expandInterfaceName(shortName),
+			Description: extract(line, colName, colStatus),
+			Status:      extract(line, colStatus, colVlan),
+			Vlan:        extract(line, colVlan, colDuplex),
+			Duplex:      extract(line, colDuplex, colSpeed),
+			Speed:       extract(line, colSpeed, colType),
+			MediaType:   extract(line, colType, -1),
+		}
+		interfaces = append(interfaces, iface)
+	}
+
+	return interfaces, nil
+}
+
+// expandInterfaceName converts an abbreviated IOS interface name to its full form.
+// Long prefixes are listed first so they match before their shorter sub-strings.
+func expandInterfaceName(short string) string {
+	prefixes := []struct{ abbr, full string }{
+		{"TenGigabitEthernet", "TenGigabitEthernet"},
+		{"GigabitEthernet", "GigabitEthernet"},
+		{"FastEthernet", "FastEthernet"},
+		{"Port-channel", "Port-channel"},
+		{"Loopback", "Loopback"},
+		{"Vlan", "Vlan"},
+		{"Te", "TenGigabitEthernet"},
+		{"Gi", "GigabitEthernet"},
+		{"Fa", "FastEthernet"},
+		{"Po", "Port-channel"},
+		{"Lo", "Loopback"},
+		{"Vl", "Vlan"},
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(short, p.abbr) {
+			return p.full + short[len(p.abbr):]
+		}
+	}
+	return short
+}
+
 // ── Static routes ─────────────────────────────────────────────────────────────
 
 // StaticRouteInfo represents a single static IP route.

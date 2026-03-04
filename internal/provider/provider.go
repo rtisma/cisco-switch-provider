@@ -198,6 +198,6 @@ func (p *CiscoProvider) Resources(ctx context.Context) []func() resource.Resourc
 // DataSources defines the data sources implemented in the provider
 func (p *CiscoProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		// No data sources yet
+		resources.NewInterfacesDataSource,
 	}
 }

@@ -114,8 +114,10 @@ func (r *SVIResource) Create(ctx context.Context, req resource.CreateRequest, re
 
 	vlanID := int(data.VlanID.ValueInt64())
 
-	// Build configuration commands
+	// Build configuration commands. ip routing is always enabled first so that
+	// the SVI can route traffic regardless of resource declaration order.
 	commands := []string{
+		"ip routing",
 		fmt.Sprintf("interface vlan %d", vlanID),
 	}
 
@@ -229,8 +231,10 @@ func (r *SVIResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	data := plan
 	vlanID := int(data.VlanID.ValueInt64())
 
-	// Build configuration commands
+	// Build configuration commands. ip routing is always enabled first so that
+	// the SVI can route traffic regardless of resource declaration order.
 	commands := []string{
+		"ip routing",
 		fmt.Sprintf("interface vlan %d", vlanID),
 	}
 
