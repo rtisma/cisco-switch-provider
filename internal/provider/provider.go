@@ -188,6 +188,10 @@ func (p *CiscoProvider) Resources(ctx context.Context) []func() resource.Resourc
 		resources.NewACLRuleResource,
 		resources.NewSNMPCommunityResource,
 		resources.NewSNMPResource,
+		resources.NewStaticRouteResource,
+		resources.NewDHCPExcludedRangeResource,
+		resources.NewDHCPHostResource,
+		resources.NewIPRoutingResource,
 	}
 }
 

@@ -736,3 +736,156 @@ func startsWithDigit(s string) bool {
 	}
 	return s[0] >= '0' && s[0] <= '9'
 }
+
+// ── Static routes ─────────────────────────────────────────────────────────────
+
+// StaticRouteInfo represents a single static IP route.
+type StaticRouteInfo struct {
+	Network       string
+	Mask          string
+	NextHop       string
+	AdminDistance int
+	Exists        bool
+}
+
+// ParseStaticRoute parses "show running-config | include ip route" output and
+// returns the route entry that matches the given network, mask, and next-hop.
+// AdminDistance defaults to 1 (the IOS default) when no explicit distance is found.
+func ParseStaticRoute(output, network, mask, nextHop string) (*StaticRouteInfo, error) {
+	route := &StaticRouteInfo{
+		Network:       network,
+		Mask:          mask,
+		NextHop:       nextHop,
+		AdminDistance: 1,
+	}
+	re := regexp.MustCompile(`^ip route\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(\d+))?`)
+	for _, line := range splitLines(output) {
+		matches := re.FindStringSubmatch(strings.TrimSpace(line))
+		if len(matches) < 4 {
+			continue
+		}
+		if matches[1] == network && matches[2] == mask && matches[3] == nextHop {
+			route.Exists = true
+			if len(matches) == 5 && matches[4] != "" {
+				route.AdminDistance, _ = strconv.Atoi(matches[4])
+			}
+			return route, nil
+		}
+	}
+	return route, nil
+}
+
+// ── DHCP excluded ranges ──────────────────────────────────────────────────────
+
+// DHCPExcludedRangeInfo represents a DHCP excluded-address range.
+type DHCPExcludedRangeInfo struct {
+	LowAddress  string
+	HighAddress string // always set; equals LowAddress for single-address exclusions
+	Exists      bool
+}
+
+// ParseDHCPExcludedRange parses "show running-config | include ip dhcp excluded"
+// and returns the exclusion entry that matches lowAddress and highAddress.
+// Pass highAddress == "" to match a single-address exclusion (high == low).
+func ParseDHCPExcludedRange(output, lowAddress, highAddress string) (*DHCPExcludedRangeInfo, error) {
+	if highAddress == "" {
+		highAddress = lowAddress
+	}
+	info := &DHCPExcludedRangeInfo{LowAddress: lowAddress, HighAddress: highAddress}
+
+	re := regexp.MustCompile(`^ip dhcp excluded-address\s+(\S+)(?:\s+(\S+))?`)
+	for _, line := range splitLines(output) {
+		matches := re.FindStringSubmatch(strings.TrimSpace(line))
+		if len(matches) < 2 {
+			continue
+		}
+		foundLow := matches[1]
+		foundHigh := foundLow // IOS may omit the high address for single exclusions
+		if len(matches) == 3 && matches[2] != "" {
+			foundHigh = matches[2]
+		}
+		if foundLow == lowAddress && foundHigh == highAddress {
+			info.LowAddress = foundLow
+			info.HighAddress = foundHigh
+			info.Exists = true
+			return info, nil
+		}
+	}
+	return info, nil
+}
+
+// ── DHCP host bindings ────────────────────────────────────────────────────────
+
+// DHCPHostInfo represents a DHCP host-binding pool (MAC → static IP).
+type DHCPHostInfo struct {
+	PoolName        string
+	IPAddress       string
+	SubnetMask      string
+	HardwareAddress string // normalised to lowercase colon format: xx:xx:xx:xx:xx:xx
+	ClientName      string
+	DefaultRouter   string
+	Exists          bool
+}
+
+// ParseDHCPHostPool parses "show running-config | section ip dhcp pool NAME"
+// output for a host-binding pool (contains "host" and "hardware-address").
+func ParseDHCPHostPool(output, poolName string) (*DHCPHostInfo, error) {
+	info := &DHCPHostInfo{PoolName: poolName}
+
+	if containsString(output, "Invalid input detected") ||
+		containsString(output, "% Invalid") {
+		return info, nil
+	}
+
+	inPool := false
+	for _, line := range splitLines(output) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "ip dhcp pool ") {
+			name := strings.TrimSpace(strings.TrimPrefix(trimmed, "ip dhcp pool "))
+			inPool = (name == poolName)
+			if inPool {
+				info.Exists = true
+			}
+			continue
+		}
+
+		if !inPool {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(trimmed, "host "):
+			parts := splitByWhitespace(strings.TrimPrefix(trimmed, "host "))
+			if len(parts) >= 2 {
+				info.IPAddress = parts[0]
+				info.SubnetMask = parts[1]
+			}
+		case strings.HasPrefix(trimmed, "hardware-address "):
+			// IOS may append the hardware type (e.g. "ethernet"); take only the MAC token.
+			raw := splitByWhitespace(strings.TrimPrefix(trimmed, "hardware-address "))[0]
+			info.HardwareAddress = normalizeMAC(raw)
+		case strings.HasPrefix(trimmed, "client-name "):
+			info.ClientName = strings.TrimSpace(strings.TrimPrefix(trimmed, "client-name "))
+		case strings.HasPrefix(trimmed, "default-router "):
+			info.DefaultRouter = strings.TrimSpace(strings.TrimPrefix(trimmed, "default-router "))
+		}
+	}
+	return info, nil
+}
+
+// normalizeMAC converts a MAC address to lowercase colon-separated format
+// (xx:xx:xx:xx:xx:xx). Accepts Cisco dotted-hex (xxxx.xxxx.xxxx) or colon
+// notation as input.
+func normalizeMAC(mac string) string {
+	mac = strings.ToLower(mac)
+	clean := strings.NewReplacer(".", "", ":", "").Replace(mac)
+	if len(clean) != 12 {
+		return mac // unrecognised format – return as-is
+	}
+	return clean[0:2] + ":" + clean[2:4] + ":" + clean[4:6] + ":" +
+		clean[6:8] + ":" + clean[8:10] + ":" + clean[10:12]
+}
