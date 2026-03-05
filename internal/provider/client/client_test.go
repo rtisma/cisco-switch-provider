@@ -28,8 +28,6 @@ func setupMockSwitch(t *testing.T) (*mock.MockSwitch, Config) {
 		Host:           "127.0.0.1",
 		Port:           parsePort(addr),
 		Username:       "admin",
-		Password:       "password",
-		EnablePassword: "enable",
 		SSHTimeout:     5 * time.Second,
 		CommandTimeout: 2 * time.Second,
 	}

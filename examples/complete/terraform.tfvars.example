@@ -1,6 +1,5 @@
 # Example variable values
-# Copy this file to terraform.tfvars and fill in your actual credentials
+# Copy this file to terraform.tfvars and fill in your actual values
 
-cisco_username       = "admin"
-cisco_password       = "your-ssh-password"
-cisco_enable_password = "your-enable-password"
+cisco_username         = "admin"
+cisco_private_key_path = "~/.ssh/id_rsa"

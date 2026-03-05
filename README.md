@@ -6,7 +6,22 @@ Manages Cisco WS-C3650 switches (and compatible IOS devices) through SSH CLI aut
 
 - Terraform >= 1.0
 - Go >= 1.21 (to build from source)
-- Cisco WS-C3650 or compatible IOS switch with SSH access and enable-mode privileges
+- Cisco WS-C3650 or compatible IOS switch with SSH access
+- SSH key-pair configured on the switch for the login user
+
+## Switch prerequisites
+
+The login account must land directly at privilege level 15 so the provider can immediately run `enable`-mode commands. Configure this on the switch:
+
+```
+username admin privilege 15
+```
+
+Or via AAA:
+
+```
+aaa authorization exec default local
+```
 
 ## Installation
 
@@ -15,12 +30,12 @@ git clone https://github.com/example-org/cisco-switch-provider.git
 cd cisco-switch-provider
 go build -o terraform-provider-cisco
 
-mkdir -p ~/.terraform.d/plugins/registry.terraform.io/example-org/cisco/1.0.0/darwin_arm64/
-cp terraform-provider-cisco ~/.terraform.d/plugins/registry.terraform.io/example-org/cisco/1.0.0/darwin_arm64/
-chmod +x ~/.terraform.d/plugins/registry.terraform.io/example-org/cisco/1.0.0/darwin_arm64/terraform-provider-cisco
+mkdir -p ~/.terraform.d/plugins/registry.terraform.io/example-org/cisco/1.0.0/linux_amd64/
+cp terraform-provider-cisco ~/.terraform.d/plugins/registry.terraform.io/example-org/cisco/1.0.0/linux_amd64/
+chmod +x ~/.terraform.d/plugins/registry.terraform.io/example-org/cisco/1.0.0/linux_amd64/terraform-provider-cisco
 ```
 
-Adjust the path for your OS/architecture (e.g. `linux_amd64`, `darwin_amd64`).
+Adjust the path for your OS/architecture (e.g. `darwin_arm64`, `darwin_amd64`).
 
 ---
 
@@ -36,19 +51,17 @@ terraform {
 }
 
 provider "cisco" {
-  host            = "192.168.1.1"
-  username        = var.cisco_username
-  password        = var.cisco_password
-  enable_password = var.cisco_enable_password  # optional
+  host             = "192.168.1.1"
+  username         = var.cisco_username
+  private_key_path = var.cisco_private_key_path
 }
 ```
 
 | Argument | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `host` | string | yes | — | IP address or hostname of the switch |
-| `username` | string | yes | — | SSH username |
-| `password` | string | yes | — | SSH password. Only password auth is supported; SSH key auth is not. |
-| `enable_password` | string | no | — | Enable mode password, if different from the SSH password |
+| `host` | string | **yes** | — | IP address or hostname of the switch |
+| `username` | string | **yes** | — | SSH username |
+| `private_key_path` | string | **yes** | — | Path to the SSH private key file used to authenticate with the switch |
 | `port` | number | no | `22` | SSH port |
 | `ssh_timeout` | number | no | `30` | SSH connection timeout in seconds |
 | `command_timeout` | number | no | `10` | Per-command timeout in seconds |
@@ -57,15 +70,39 @@ provider "cisco" {
 
 ## Resources
 
+- [cisco_ip_routing](#cisco_ip_routing)
 - [cisco_vlan](#cisco_vlan)
 - [cisco_interface](#cisco_interface)
 - [cisco_svi](#cisco_svi)
 - [cisco_interface_ip](#cisco_interface_ip)
 - [cisco_dhcp_pool](#cisco_dhcp_pool)
+- [cisco_dhcp_excluded_range](#cisco_dhcp_excluded_range)
+- [cisco_dhcp_host](#cisco_dhcp_host)
 - [cisco_acl_rule](#cisco_acl_rule)
 - [cisco_acl_policy](#cisco_acl_policy)
 - [cisco_snmp_community](#cisco_snmp_community)
 - [cisco_snmp](#cisco_snmp)
+- [cisco_static_route](#cisco_static_route)
+
+---
+
+### cisco_ip_routing
+
+Enables or disables global IP routing (`ip routing`) on the switch. Required for inter-VLAN routing via SVIs. Only one of this resource should exist per switch.
+
+> **Note:** `cisco_svi` automatically issues `ip routing` before configuring the interface, so this resource is only needed if you want to explicitly manage or disable IP routing.
+
+```hcl
+resource "cisco_ip_routing" "this" {
+  enabled = true
+}
+```
+
+| Argument | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `enabled` | bool | no | `true` | `true` = `ip routing`, `false` = `no ip routing` |
+
+**Computed attribute:** `id` — always `"ip_routing"` (singleton, no import needed).
 
 ---
 
@@ -135,6 +172,8 @@ terraform import cisco_interface.desktop "GigabitEthernet1/0/1"
 
 Creates a Switch Virtual Interface (SVI) — the Layer 3 gateway for a VLAN. Supports DHCP relay and ACL filtering.
 
+`cisco_svi` automatically issues `ip routing` before configuring the interface, so inter-VLAN routing is always enabled regardless of resource declaration order.
+
 ```hcl
 # Basic gateway
 resource "cisco_svi" "sales_gw" {
@@ -146,11 +185,11 @@ resource "cisco_svi" "sales_gw" {
 
 # Gateway with DHCP relay and inbound ACL
 resource "cisco_svi" "eng_gw" {
-  vlan_id          = cisco_vlan.engineering.vlan_id
-  ip_address       = "192.168.200.1"
-  subnet_mask      = "255.255.255.0"
-  dhcp_servers     = ["10.0.0.1", "10.0.0.2"]
-  access_group_in  = cisco_acl_policy.inter_vlan.name
+  vlan_id         = cisco_vlan.engineering.vlan_id
+  ip_address      = "192.168.200.1"
+  subnet_mask     = "255.255.255.0"
+  dhcp_servers    = ["10.0.0.1", "10.0.0.2"]
+  access_group_in = cisco_acl_policy.inter_vlan.name
 }
 ```
 
@@ -161,7 +200,7 @@ resource "cisco_svi" "eng_gw" {
 | `subnet_mask` | string | **yes** | — | Subnet mask |
 | `description` | string | no | — | Interface description |
 | `enabled` | bool | no | `true` | `true` = no shutdown, `false` = shutdown |
-| `dhcp_servers` | list(string) | no | — | DHCP relay server IPs (`ip helper-address`). Forwards DHCP requests to an external server instead of the switch serving them. |
+| `dhcp_servers` | list(string) | no | — | DHCP relay server IPs (`ip helper-address`). Forwards DHCP requests to an external server. |
 | `access_group_in` | string | no | — | `cisco_acl_policy` name to apply inbound (`ip access-group <name> in`) |
 | `access_group_out` | string | no | — | `cisco_acl_policy` name to apply outbound (`ip access-group <name> out`) |
 
@@ -237,6 +276,58 @@ terraform import cisco_dhcp_pool.sales "SALES"
 
 ---
 
+### cisco_dhcp_excluded_range
+
+Excludes an address range from all DHCP pools. Typically used to reserve the gateway and other static IPs.
+
+```hcl
+resource "cisco_dhcp_excluded_range" "reserved" {
+  low_address  = "192.168.100.1"
+  high_address = "192.168.100.10"
+}
+```
+
+| Argument | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `low_address` | string | **yes** | — | First IP to exclude. Changing forces a new resource. |
+| `high_address` | string | no | — | Last IP to exclude. If omitted, only `low_address` is excluded. Changing forces a new resource. |
+
+```bash
+terraform import cisco_dhcp_excluded_range.reserved "192.168.100.1/192.168.100.10"
+# Single address:
+terraform import cisco_dhcp_excluded_range.gw "192.168.100.1"
+```
+
+---
+
+### cisco_dhcp_host
+
+Creates a named DHCP pool that binds a MAC address to a fixed IP (static DHCP lease).
+
+```hcl
+resource "cisco_dhcp_host" "printer" {
+  name             = "PRINTER-01"
+  ip_address       = "192.168.100.200"
+  subnet_mask      = "255.255.255.0"
+  hardware_address = "aa:bb:cc:dd:ee:ff"
+  default_router   = "192.168.100.1"
+}
+```
+
+| Argument | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | string | **yes** | — | Pool name. Changing forces a new resource. |
+| `ip_address` | string | **yes** | — | Fixed IP to assign |
+| `subnet_mask` | string | **yes** | — | Subnet mask |
+| `hardware_address` | string | **yes** | — | Client MAC address (`xx:xx:xx:xx:xx:xx`). Changing forces a new resource. |
+| `default_router` | string | no | — | Default gateway offered to the client |
+
+```bash
+terraform import cisco_dhcp_host.printer "PRINTER-01"
+```
+
+---
+
 ### cisco_acl_rule
 
 Defines a single ACE (access control entry). **This resource is local-only — it never writes to the switch.** Its `id` is the IOS ACE command string (e.g. `"permit ip 192.168.100.0 0.0.0.255 any"`), which is referenced in order inside `cisco_acl_policy.rules`. Any attribute change forces a new resource and a new `id`, which the policy automatically picks up.
@@ -252,12 +343,12 @@ resource "cisco_acl_rule" "allow_sales_to_eng" {
 }
 
 resource "cisco_acl_rule" "allow_https_out" {
-  action      = "permit"
-  protocol    = "tcp"
-  source      = "192.168.100.0"
+  action          = "permit"
+  protocol        = "tcp"
+  source          = "192.168.100.0"
   source_wildcard = "0.0.0.255"
-  destination = "any"
-  dst_port    = "eq 443"
+  destination     = "any"
+  dst_port        = "eq 443"
 }
 
 resource "cisco_acl_rule" "deny_all" {
@@ -274,8 +365,8 @@ resource "cisco_acl_rule" "deny_all" {
 | `action` | string | **yes** | — | `"permit"` or `"deny"`. Changing forces a new resource. |
 | `source` | string | **yes** | — | `"any"`, a host IP, or a network IP (pair with `source_wildcard`). Changing forces a new resource. |
 | `protocol` | string | no | `"ip"` | `"ip"`, `"tcp"`, `"udp"`, or `"icmp"`. Changing forces a new resource. |
-| `source_wildcard` | string | no | — | Wildcard mask for the source network. Omit for `"any"` or a single host. Changing forces a new resource. |
-| `destination` | string | no | — | Same format as `source`. Required for extended ACLs. Changing forces a new resource. |
+| `source_wildcard` | string | no | — | Wildcard mask for the source network. Changing forces a new resource. |
+| `destination` | string | no | — | Same format as `source`. Changing forces a new resource. |
 | `destination_wildcard` | string | no | — | Wildcard mask for the destination. Changing forces a new resource. |
 | `src_port` | string | no | — | Source port match for TCP/UDP (e.g. `"eq 80"`, `"range 8000 8080"`). Changing forces a new resource. |
 | `dst_port` | string | no | — | Destination port match for TCP/UDP (e.g. `"eq 443"`). Changing forces a new resource. |
@@ -326,7 +417,7 @@ terraform import cisco_acl_policy.inter_vlan "extended/INTER-VLAN-POLICY"
 
 ### cisco_snmp_community
 
-Manages a single SNMP community string. Create one resource per community needed. Use `access = "ro"` for Prometheus SNMP Exporter polling.
+Manages a single SNMP community string. Create one resource per community needed.
 
 ```hcl
 # Read-only community for Prometheus polling
@@ -378,6 +469,38 @@ resource "cisco_snmp" "main" {
 | `trap_hosts` | list(string) | no | — | IPs of trap receivers (`snmp-server host`). Setting this also enables `snmp-server enable traps`. |
 
 **Computed attribute:** `id` — always `"snmp"` (singleton resource, no import needed).
+
+---
+
+### cisco_static_route
+
+Adds a static route to the switch's routing table.
+
+```hcl
+resource "cisco_static_route" "default" {
+  network  = "0.0.0.0"
+  mask     = "0.0.0.0"
+  next_hop = "192.168.1.254"
+}
+
+resource "cisco_static_route" "specific" {
+  network   = "10.10.0.0"
+  mask      = "255.255.0.0"
+  next_hop  = "192.168.1.254"
+  distance  = 10
+}
+```
+
+| Argument | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `network` | string | **yes** | — | Destination network address. Changing forces a new resource. |
+| `mask` | string | **yes** | — | Subnet mask. Changing forces a new resource. |
+| `next_hop` | string | **yes** | — | Next-hop IP address. Changing forces a new resource. |
+| `distance` | number | no | — | Administrative distance. Changing forces a new resource. |
+
+```bash
+terraform import cisco_static_route.default "0.0.0.0/0.0.0.0/192.168.1.254"
+```
 
 ---
 
@@ -477,6 +600,31 @@ groups:
 ## Complete Example
 
 ```hcl
+terraform {
+  required_providers {
+    cisco = {
+      source = "registry.terraform.io/example-org/cisco"
+    }
+  }
+}
+
+provider "cisco" {
+  host             = "192.168.1.1"
+  username         = var.cisco_username
+  private_key_path = var.cisco_private_key_path
+}
+
+variable "cisco_username" {
+  description = "SSH username for the Cisco switch"
+  type        = string
+}
+
+variable "cisco_private_key_path" {
+  description = "Path to the SSH private key file"
+  type        = string
+  default     = "~/.ssh/id_rsa"
+}
+
 # ── VLANs ────────────────────────────────────────────────────────────────────
 
 resource "cisco_vlan" "sales" {
@@ -534,14 +682,14 @@ resource "cisco_acl_policy" "inter_vlan" {
 }
 
 # ── SVIs (Layer 3 gateways) ───────────────────────────────────────────────────
+# ip routing is automatically enabled by cisco_svi — no depends_on needed.
 
 resource "cisco_svi" "sales_gw" {
-  vlan_id          = cisco_vlan.sales.vlan_id
-  ip_address       = "192.168.100.1"
-  subnet_mask      = "255.255.255.0"
-  description      = "Sales Gateway"
-  dhcp_servers     = ["10.0.0.1"]
-  access_group_in  = cisco_acl_policy.inter_vlan.name
+  vlan_id         = cisco_vlan.sales.vlan_id
+  ip_address      = "192.168.100.1"
+  subnet_mask     = "255.255.255.0"
+  description     = "Sales Gateway"
+  access_group_in = cisco_acl_policy.inter_vlan.name
 }
 
 resource "cisco_svi" "eng_gw" {
@@ -551,15 +699,12 @@ resource "cisco_svi" "eng_gw" {
   description = "Engineering Gateway"
 }
 
-# ── Management ────────────────────────────────────────────────────────────────
-
-resource "cisco_interface_ip" "mgmt" {
-  interface   = "Vlan1"
-  ip_address  = "192.168.1.10"
-  subnet_mask = "255.255.255.0"
-}
-
 # ── DHCP (switch acts as server) ─────────────────────────────────────────────
+
+resource "cisco_dhcp_excluded_range" "sales_reserved" {
+  low_address  = "192.168.100.1"
+  high_address = "192.168.100.10"
+}
 
 resource "cisco_dhcp_pool" "sales" {
   name           = "SALES"
@@ -568,6 +713,14 @@ resource "cisco_dhcp_pool" "sales" {
   default_router = "192.168.100.1"
   dns_servers    = ["8.8.8.8", "8.8.4.4"]
   lease_days     = 1
+}
+
+# ── Management ────────────────────────────────────────────────────────────────
+
+resource "cisco_interface_ip" "mgmt" {
+  interface   = "Vlan1"
+  ip_address  = "192.168.1.10"
+  subnet_mask = "255.255.255.0"
 }
 
 # ── SNMP / Observability ──────────────────────────────────────────────────────
@@ -589,11 +742,12 @@ resource "cisco_snmp" "main" {
 
 ## Notes
 
-- **Authentication:** Password-based SSH only. SSH key auth is not supported.
+- **Authentication:** SSH private key only. Password authentication is not supported. The login account must have privilege level 15 (no enable password prompt).
 - **Persistence:** Every apply runs `write memory` automatically — changes always survive a reboot.
+- **IP routing:** `cisco_svi` automatically issues `ip routing` before configuring the interface. A separate `cisco_ip_routing` resource is only needed if you want to explicitly disable routing.
 - **Operations:** Single SSH session; all operations are sequential.
 - **IOS version:** Tested on IOS 15.x.
-- **Security:** Use `sensitive = true` for password variables. The provider uses `ssh.InsecureIgnoreHostKey()` — configure proper host key verification in production environments.
+- **Security:** The provider uses `ssh.InsecureIgnoreHostKey()` — configure proper host key verification in production environments.
 
 ## License
 

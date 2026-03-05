@@ -95,24 +95,6 @@ func (c *Client) enterPrivilegedMode() error {
 		return fmt.Errorf("failed to send enable command: %w", err)
 	}
 
-	// Check if password is required
-	if containsString(output, "Password:") {
-		if c.config.EnablePassword == "" {
-			return fmt.Errorf("enable password required but not provided")
-		}
-
-		// Send password
-		if _, err := c.stdin.Write([]byte(c.config.EnablePassword + "\n")); err != nil {
-			return fmt.Errorf("failed to send enable password: %w", err)
-		}
-
-		// Read response
-		output, err = c.readUntilPrompt()
-		if err != nil {
-			return fmt.Errorf("failed to read after enable password: %w", err)
-		}
-	}
-
 	// Update current mode
 	mode, _ := c.detectModeFromPrompt(output)
 	if mode != ModePrivileged {

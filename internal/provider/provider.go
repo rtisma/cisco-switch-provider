@@ -27,8 +27,7 @@ type CiscoProviderModel struct {
 	Host           types.String `tfsdk:"host"`
 	Port           types.Int64  `tfsdk:"port"`
 	Username       types.String `tfsdk:"username"`
-	Password       types.String `tfsdk:"password"`
-	EnablePassword types.String `tfsdk:"enable_password"`
+	PrivateKeyPath types.String `tfsdk:"private_key_path"`
 	SSHTimeout     types.Int64  `tfsdk:"ssh_timeout"`
 	CommandTimeout types.Int64  `tfsdk:"command_timeout"`
 }
@@ -65,15 +64,9 @@ func (p *CiscoProvider) Schema(ctx context.Context, req provider.SchemaRequest, 
 				Description: "SSH username for authentication",
 				Required:    true,
 			},
-			"password": schema.StringAttribute{
-				Description: "SSH password for authentication",
+			"private_key_path": schema.StringAttribute{
+				Description: "Path to the SSH private key file used to authenticate with the switch",
 				Required:    true,
-				Sensitive:   true,
-			},
-			"enable_password": schema.StringAttribute{
-				Description: "Enable mode password (if different from SSH password)",
-				Optional:    true,
-				Sensitive:   true,
 			},
 			"ssh_timeout": schema.Int64Attribute{
 				Description: "SSH connection timeout in seconds (default: 30)",
@@ -114,14 +107,6 @@ func (p *CiscoProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		)
 	}
 
-	if config.Password.IsNull() || config.Password.ValueString() == "" {
-		resp.Diagnostics.AddError(
-			"Missing Password",
-			"The provider cannot create the Cisco client as there is a missing or empty value for the password. "+
-				"Set the password value in the provider configuration.",
-		)
-	}
-
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -142,18 +127,12 @@ func (p *CiscoProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		commandTimeout = int(config.CommandTimeout.ValueInt64())
 	}
 
-	enablePassword := ""
-	if !config.EnablePassword.IsNull() {
-		enablePassword = config.EnablePassword.ValueString()
-	}
-
 	// Create client configuration
 	clientConfig := client.Config{
 		Host:           config.Host.ValueString(),
 		Port:           port,
 		Username:       config.Username.ValueString(),
-		Password:       config.Password.ValueString(),
-		EnablePassword: enablePassword,
+		PrivateKeyPath: config.PrivateKeyPath.ValueString(),
 		SSHTimeout:     time.Duration(sshTimeout) * time.Second,
 		CommandTimeout: time.Duration(commandTimeout) * time.Second,
 	}

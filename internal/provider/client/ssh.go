@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -10,12 +11,19 @@ import (
 
 // connect establishes the SSH connection and session
 func (c *Client) connect() error {
+	keyBytes, err := os.ReadFile(c.config.PrivateKeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to read private key %q: %w", c.config.PrivateKeyPath, err)
+	}
+	signer, err := ssh.ParsePrivateKey(keyBytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse private key %q: %w", c.config.PrivateKeyPath, err)
+	}
+
 	// Create SSH client config
 	config := &ssh.ClientConfig{
-		User: c.config.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(c.config.Password),
-		},
+		User:            c.config.Username,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // In production, should verify host key
 		Timeout:         c.config.SSHTimeout,
 	}
@@ -117,24 +125,9 @@ func (c *Client) disablePaging() error {
 			return err
 		}
 
-		// Wait for password prompt or privileged prompt
-		output, err := c.readUntilPrompt()
-		if err != nil {
+		// Wait for privileged prompt
+		if _, err := c.readUntilPrompt(); err != nil {
 			return err
-		}
-
-		// Check if we need to enter enable password
-		if containsString(output, "Password:") {
-			if c.config.EnablePassword == "" {
-				return fmt.Errorf("enable password required but not provided")
-			}
-			cmd = c.config.EnablePassword + "\n"
-			if _, err := c.stdin.Write([]byte(cmd)); err != nil {
-				return err
-			}
-			if _, err := c.readUntilPrompt(); err != nil {
-				return err
-			}
 		}
 
 		// Update mode

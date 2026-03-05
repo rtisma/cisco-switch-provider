@@ -49,8 +49,7 @@ type Config struct {
 	Host           string
 	Port           int
 	Username       string
-	Password       string
-	EnablePassword string
+	PrivateKeyPath string
 	SSHTimeout     time.Duration
 	CommandTimeout time.Duration
 }
