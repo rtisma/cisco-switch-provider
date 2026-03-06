@@ -171,6 +171,7 @@ func (p *CiscoProvider) Resources(ctx context.Context) []func() resource.Resourc
 		resources.NewDHCPExcludedRangeResource,
 		resources.NewDHCPHostResource,
 		resources.NewIPRoutingResource,
+		resources.NewWriteMemoryResource,
 	}
 }
 

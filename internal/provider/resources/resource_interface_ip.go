@@ -90,6 +90,9 @@ func (r *InterfaceIPResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Validate configuration
 	if err := r.validateConfig(&data); err != nil {
 		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
@@ -180,6 +183,9 @@ func (r *InterfaceIPResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Validate configuration
 	if err := r.validateConfig(&data); err != nil {
 		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
@@ -222,6 +228,9 @@ func (r *InterfaceIPResource) Delete(ctx context.Context, req resource.DeleteReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	// Remove IP address from interface
 	commands := []string{

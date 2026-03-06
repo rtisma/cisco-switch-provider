@@ -83,6 +83,9 @@ func (r *ACLPolicyResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.applyACL(ctx, data); err != nil {
 		resp.Diagnostics.AddError("Error Creating ACL",
 			fmt.Sprintf("Could not create ACL %q: %s", data.Name.ValueString(), err.Error()))
@@ -131,6 +134,9 @@ func (r *ACLPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	deleteCmd := []string{
 		fmt.Sprintf("no ip access-list %s %s", state.Type.ValueString(), state.Name.ValueString()),
 		"end",
@@ -155,6 +161,9 @@ func (r *ACLPolicyResource) Delete(ctx context.Context, req resource.DeleteReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	commands := []string{
 		fmt.Sprintf("no ip access-list %s %s", data.Type.ValueString(), data.Name.ValueString()),

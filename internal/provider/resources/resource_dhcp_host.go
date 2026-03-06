@@ -97,6 +97,9 @@ func (r *DHCPHostResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data)); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating DHCP Host Binding",
@@ -149,6 +152,9 @@ func (r *DHCPHostResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	commands := []string{
 		fmt.Sprintf("ip dhcp pool %s", plan.PoolName.ValueString()),
 		fmt.Sprintf("host %s %s", plan.IPAddress.ValueString(), plan.SubnetMask.ValueString()),
@@ -198,6 +204,9 @@ func (r *DHCPHostResource) Delete(ctx context.Context, req resource.DeleteReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	cmds := []string{
 		fmt.Sprintf("no ip dhcp pool %s", data.PoolName.ValueString()),

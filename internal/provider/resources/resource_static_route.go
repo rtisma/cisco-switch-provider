@@ -94,6 +94,9 @@ func (r *StaticRouteResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data)); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Static Route",
@@ -146,6 +149,9 @@ func (r *StaticRouteResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Re-issuing ip route with a new distance replaces the existing entry.
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data)); err != nil {
 		resp.Diagnostics.AddError(
@@ -171,6 +177,9 @@ func (r *StaticRouteResource) Delete(ctx context.Context, req resource.DeleteReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	cmds := r.buildCommands(data)
 	cmds[0] = "no " + cmds[0]

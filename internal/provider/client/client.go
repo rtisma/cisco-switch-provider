@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +55,12 @@ type Config struct {
 	CommandTimeout time.Duration
 }
 
-// Client represents a Cisco IOS CLI client
+// Client represents a Cisco IOS CLI client.
+//
+// opMu serialises full resource operations (Create/Update/Delete) so that
+// commands from different Terraform goroutines never interleave on the switch.
+// mu serialises individual SSH command reads/writes within an operation.
+// Always acquire opMu before mu — they are never held in the reverse order.
 type Client struct {
 	config         Config
 	sshClient      *ssh.Client
@@ -63,7 +69,8 @@ type Client struct {
 	stdout         sshReader
 	currentMode    CLIMode
 	hostname       string
-	mu             sync.Mutex
+	opMu           sync.Mutex // operation-level: held for the duration of a resource Create/Update/Delete
+	mu             sync.Mutex // command-level: held while sending a single SSH command
 	connected      bool
 	commandTimeout time.Duration
 }
@@ -78,7 +85,6 @@ type sshReader interface {
 
 // NewClient creates a new Cisco client
 func NewClient(config Config) *Client {
-	// Set defaults
 	if config.Port == 0 {
 		config.Port = 22
 	}
@@ -94,6 +100,18 @@ func NewClient(config Config) *Client {
 		currentMode:    ModeUnknown,
 		commandTimeout: config.CommandTimeout,
 	}
+}
+
+// Lock acquires the operation-level mutex. Every resource Create/Update/Delete
+// must call Lock at the start and defer Unlock so that operations are
+// serialised end-to-end. This prevents interleaved SSH traffic on the switch.
+func (c *Client) Lock() {
+	c.opMu.Lock()
+}
+
+// Unlock releases the operation-level mutex.
+func (c *Client) Unlock() {
+	c.opMu.Unlock()
 }
 
 // Connect establishes SSH connection and initializes the session
@@ -112,7 +130,6 @@ func (c *Client) Connect() error {
 		}
 	}
 
-	// Enter privileged mode
 	if err := c.enterPrivilegedMode(); err != nil {
 		c.disconnect()
 		return err
@@ -147,6 +164,34 @@ func (c *Client) disconnect() error {
 	return nil
 }
 
+// reconnect drops the current session and establishes a fresh one.
+// Must be called with c.mu held.
+func (c *Client) reconnect() error {
+	c.disconnect()
+	if err := c.connect(); err != nil {
+		return fmt.Errorf("reconnect: %w", err)
+	}
+	if err := c.enterPrivilegedMode(); err != nil {
+		c.disconnect()
+		return fmt.Errorf("reconnect: %w", err)
+	}
+	c.connected = true
+	return nil
+}
+
+// isConnectionError returns true for errors that indicate the SSH session has dropped.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "use of closed network connection") ||
+		strings.Contains(msg, "read error")
+}
+
 // IsConnected returns whether the client is connected
 func (c *Client) IsConnected() bool {
 	c.mu.Lock()
@@ -161,103 +206,124 @@ func (c *Client) GetHostname() string {
 	return c.hostname
 }
 
-// executeCommand executes a command and returns the output
-// This is a low-level method that should be called with the mutex held
+// executeCommand is the low-level command sender. Must be called with c.mu held.
 func (c *Client) executeCommand(command string) (string, error) {
 	if !c.connected {
 		return "", fmt.Errorf("not connected")
 	}
-
 	return c.sendCommand(command)
 }
 
-// ExecuteCommand executes a command in privileged mode
+// ExecuteCommand executes a single show/exec command in privileged mode.
+// Retries once on connection errors.
 func (c *Client) ExecuteCommand(command string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.connected {
-		return "", fmt.Errorf("not connected")
-	}
-
-	// Ensure we're in privileged mode
-	if c.currentMode != ModePrivileged {
-		if err := c.returnToPrivilegedMode(); err != nil {
-			return "", err
+	for attempt := 0; attempt <= 1; attempt++ {
+		if !c.connected {
+			return "", fmt.Errorf("not connected")
 		}
-	}
 
-	output, err := c.sendCommand(command)
-	if err != nil {
-		return "", &CiscoError{
-			Operation: "execute",
-			Command:   command,
-			Err:       err,
+		if c.currentMode != ModePrivileged {
+			if err := c.returnToPrivilegedMode(); err != nil {
+				if attempt == 0 && isConnectionError(err) {
+					if reconnErr := c.reconnect(); reconnErr != nil {
+						return "", reconnErr
+					}
+					continue
+				}
+				return "", err
+			}
 		}
-	}
 
-	// Check for errors in output
-	if isError, errMsg := IsErrorOutput(output); isError {
-		return output, &CiscoError{
-			Operation: "execute",
-			Command:   command,
-			Output:    errMsg,
+		output, err := c.sendCommand(command)
+		if err != nil {
+			if attempt == 0 && isConnectionError(err) {
+				if reconnErr := c.reconnect(); reconnErr != nil {
+					return "", reconnErr
+				}
+				continue
+			}
+			return "", &CiscoError{Operation: "execute", Command: command, Err: err}
 		}
+
+		if isError, errMsg := IsErrorOutput(output); isError {
+			return output, &CiscoError{Operation: "execute", Command: command, Output: errMsg}
+		}
+
+		return output, nil
 	}
 
-	return output, nil
+	return "", fmt.Errorf("failed after reconnect")
 }
 
-// ExecuteConfigCommands executes a series of commands in config mode and then
-// saves the running configuration to startup-config via "write memory" so that
-// changes survive a reboot.
+// ExecuteConfigCommands executes a series of IOS config-mode commands.
+// Changes are NOT saved to startup-config automatically — the caller must
+// apply a cisco_write_memory resource to persist them.
+// Retries once on connection errors.
 func (c *Client) ExecuteConfigCommands(commands []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for attempt := 0; attempt <= 1; attempt++ {
+		if !c.connected {
+			return fmt.Errorf("not connected")
+		}
+
+		if err := c.runConfigCommands(commands); err != nil {
+			if attempt == 0 && isConnectionError(err) {
+				if reconnErr := c.reconnect(); reconnErr != nil {
+					return reconnErr
+				}
+				continue
+			}
+			return err
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed after reconnect")
+}
+
+// runConfigCommands enters config mode, sends commands, and returns to
+// privileged mode. Must be called with c.mu held.
+func (c *Client) runConfigCommands(commands []string) error {
+	if err := c.enterConfigMode(); err != nil {
+		return err
+	}
+
+	for _, cmd := range commands {
+		output, err := c.sendCommand(cmd)
+		if err != nil {
+			c.returnToPrivilegedMode()
+			return &CiscoError{Operation: "config", Command: cmd, Err: err}
+		}
+
+		if isError, errMsg := IsErrorOutput(output); isError {
+			c.returnToPrivilegedMode()
+			return &CiscoError{Operation: "config", Command: cmd, Output: errMsg}
+		}
+	}
+
+	return c.returnToPrivilegedMode()
+}
+
+// WriteMemory saves the running-config to startup-config ("write memory").
+// This is the only way changes are persisted. Call it via the
+// cisco_write_memory resource after all other resources have been applied.
+func (c *Client) WriteMemory() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if !c.connected {
 		return fmt.Errorf("not connected")
 	}
-
-	// Enter config mode
-	if err := c.enterConfigMode(); err != nil {
-		return err
-	}
-
-	// Execute each command
-	for _, cmd := range commands {
-		output, err := c.sendCommand(cmd)
-		if err != nil {
-			c.returnToPrivilegedMode()
-			return &CiscoError{
-				Operation: "config",
-				Command:   cmd,
-				Err:       err,
-			}
-		}
-
-		// Check for errors in output
-		if isError, errMsg := IsErrorOutput(output); isError {
-			c.returnToPrivilegedMode()
-			return &CiscoError{
-				Operation: "config",
-				Command:   cmd,
-				Output:    errMsg,
-			}
-		}
-	}
-
-	// Return to privileged mode
-	if err := c.returnToPrivilegedMode(); err != nil {
-		return err
-	}
-
-	// Persist changes to startup-config so they survive a reboot.
 	return c.writeMemory()
 }
 
-// writeMemory saves running-config to startup-config ("write memory").
-// Must be called with c.mu held and while in privileged mode.
+// writeMemory is the internal implementation. Must be called with c.mu held.
 func (c *Client) writeMemory() error {
 	output, err := c.sendCommand("write memory")
 	if err != nil {

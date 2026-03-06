@@ -94,6 +94,9 @@ func (r *VlanResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Validate VLAN ID
 	vlanID := int(data.VlanID.ValueInt64())
 	if vlanID < 1 || vlanID > 4094 {
@@ -195,6 +198,9 @@ func (r *VlanResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	vlanID := int(data.VlanID.ValueInt64())
 
 	// Build configuration commands
@@ -240,6 +246,9 @@ func (r *VlanResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	vlanID := int(data.VlanID.ValueInt64())
 

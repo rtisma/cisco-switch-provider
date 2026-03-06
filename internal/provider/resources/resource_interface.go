@@ -110,6 +110,9 @@ func (r *InterfaceResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Validate configuration
 	if err := r.validateConfig(&data); err != nil {
 		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
@@ -182,6 +185,9 @@ func (r *InterfaceResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Validate configuration
 	if err := r.validateConfig(&data); err != nil {
 		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
@@ -224,6 +230,9 @@ func (r *InterfaceResource) Delete(ctx context.Context, req resource.DeleteReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	// Reset interface to default configuration
 	commands := []string{

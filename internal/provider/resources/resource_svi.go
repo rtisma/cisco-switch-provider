@@ -112,6 +112,9 @@ func (r *SVIResource) Create(ctx context.Context, req resource.CreateRequest, re
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	vlanID := int(data.VlanID.ValueInt64())
 
 	// Build configuration commands. ip routing is always enabled first so that
@@ -228,6 +231,9 @@ func (r *SVIResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	data := plan
 	vlanID := int(data.VlanID.ValueInt64())
 
@@ -315,6 +321,9 @@ func (r *SVIResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	vlanID := int(data.VlanID.ValueInt64())
 

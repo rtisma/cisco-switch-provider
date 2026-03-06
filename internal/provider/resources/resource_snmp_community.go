@@ -79,6 +79,9 @@ func (r *SNMPCommunityResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data)); err != nil {
 		resp.Diagnostics.AddError("Error Creating SNMP Community",
 			fmt.Sprintf("Could not create SNMP community %q: %s", data.Name.ValueString(), err.Error()))
@@ -120,6 +123,9 @@ func (r *SNMPCommunityResource) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data)); err != nil {
 		resp.Diagnostics.AddError("Error Updating SNMP Community",
 			fmt.Sprintf("Could not update SNMP community %q: %s", data.Name.ValueString(), err.Error()))
@@ -135,6 +141,9 @@ func (r *SNMPCommunityResource) Delete(ctx context.Context, req resource.DeleteR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	commands := []string{
 		fmt.Sprintf("no snmp-server community %s", data.Name.ValueString()),

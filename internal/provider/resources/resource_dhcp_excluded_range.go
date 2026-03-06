@@ -83,6 +83,9 @@ func (r *DHCPExcludedRangeResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	low := data.LowAddress.ValueString()
 	high := data.HighAddress.ValueString()
 	if high == "" {
@@ -153,6 +156,9 @@ func (r *DHCPExcludedRangeResource) Delete(ctx context.Context, req resource.Del
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	low := data.LowAddress.ValueString()
 	high := data.HighAddress.ValueString()

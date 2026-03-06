@@ -96,6 +96,9 @@ func (r *SNMPResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	commands, err := r.buildApplyCommands(ctx, data)
 	if err != nil {
 		resp.Diagnostics.AddError("Error Building SNMP Commands", err.Error())
@@ -141,6 +144,9 @@ func (r *SNMPResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	// Build cleanup commands for anything being removed or changed.
 	cleanup := r.buildCleanupCommands(ctx, plan, state)
 
@@ -170,6 +176,9 @@ func (r *SNMPResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	commands := []string{}
 

@@ -78,6 +78,9 @@ func (r *IPRoutingResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data.Enabled.ValueBool())); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Configuring IP Routing",
@@ -116,6 +119,9 @@ func (r *IPRoutingResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands(r.buildCommands(data.Enabled.ValueBool())); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating IP Routing",
@@ -129,6 +135,9 @@ func (r *IPRoutingResource) Update(ctx context.Context, req resource.UpdateReque
 }
 
 func (r *IPRoutingResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	if err := r.client.ExecuteConfigCommands([]string{"no ip routing", "end"}); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Removing IP Routing",

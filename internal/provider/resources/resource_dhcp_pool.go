@@ -120,6 +120,9 @@ func (r *DHCPPoolResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	commands := r.buildCommands(ctx, data)
 
 	if err := r.client.ExecuteConfigCommands(commands); err != nil {
@@ -186,6 +189,9 @@ func (r *DHCPPoolResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	r.client.Lock()
+	defer r.client.Unlock()
+
 	commands := r.buildCommands(ctx, data)
 
 	if err := r.client.ExecuteConfigCommands(commands); err != nil {
@@ -216,6 +222,9 @@ func (r *DHCPPoolResource) Delete(ctx context.Context, req resource.DeleteReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	r.client.Lock()
+	defer r.client.Unlock()
 
 	commands := []string{
 		fmt.Sprintf("no ip dhcp pool %s", data.Name.ValueString()),
